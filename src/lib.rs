@@ -24,14 +24,9 @@ pub use store::{Token, TokenStore};
 use authenticate::store::sha256;
 use authenticate::{AuthenticateError, Authenticator, Presented};
 use context::Verified;
+use identify::authorization::{BEARER_TOKEN, bearer_short};
 use std::time::{SystemTime, UNIX_EPOCH};
 use xcore::{Mechanism, mechanism};
-
-/// The proof name this verifier reads off a `Presented`: the whole token.
-pub const PROOF: &str = "bearer.token";
-
-/// How many characters of a token the first gate puts on the claim.
-pub const SHORT_FORM: usize = 8;
 
 type Clock = Box<dyn Fn() -> i64 + Send + Sync>;
 
@@ -43,17 +38,6 @@ pub fn now() -> i64 {
         .map_or(0, |since| {
             i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
         })
-}
-
-/// The form of a token that may reach the record: its first eight
-/// characters and an ellipsis, as the first gate writes it.
-#[must_use]
-pub fn short_form(token: &str) -> String {
-    token
-        .chars()
-        .take(SHORT_FORM)
-        .chain(std::iter::once('…'))
-        .collect()
 }
 
 /// Verifies a `bearer` claim with a `bearer.token` proof against a store.
@@ -97,9 +81,9 @@ impl Authenticator for BearerAuthenticator {
                 "'{name}' was presented and this authenticator verifies bearer"
             )));
         }
-        let token = presented.proof(PROOF).ok_or_else(|| {
+        let token = presented.proof(BEARER_TOKEN).ok_or_else(|| {
             AuthenticateError::new(format!(
-                "no '{PROOF}' proof was presented with the claim '{}'",
+                "no '{BEARER_TOKEN}' proof was presented with the claim '{}'",
                 presented.value
             ))
         })?;
@@ -111,7 +95,7 @@ impl Authenticator for BearerAuthenticator {
         let Some(held) = self.store.holding(&sha256(token.as_bytes())) else {
             return Ok(Verified::Refused);
         };
-        if presented.value != short_form(token) && presented.value != held.name() {
+        if presented.value != bearer_short(token) && presented.value != held.name() {
             return Err(AuthenticateError::new(format!(
                 "the claim names '{}' and the token presented is another",
                 presented.value
@@ -147,7 +131,7 @@ mod tests {
     }
 
     fn claim(token: &str) -> Presented {
-        Presented::passed(mechanism::bearer(), short_form(token)).with_proof(PROOF, token)
+        Presented::passed(mechanism::bearer(), bearer_short(token)).with_proof(BEARER_TOKEN, token)
     }
 
     #[test]
@@ -160,7 +144,8 @@ mod tests {
             Verified::Proven
         );
         // A claim under the name the token was issued to reads too.
-        let named = Presented::passed(mechanism::bearer(), "partner-x").with_proof(PROOF, TOKEN);
+        let named =
+            Presented::passed(mechanism::bearer(), "partner-x").with_proof(BEARER_TOKEN, TOKEN);
         assert_eq!(verifier.verify(&named).expect("verified"), Verified::Proven);
     }
 
@@ -190,8 +175,8 @@ mod tests {
 
     #[test]
     fn a_claim_that_is_not_the_presented_token_is_refused() {
-        let crossed = Presented::passed(mechanism::bearer(), short_form("zzzz-expired-token"))
-            .with_proof(PROOF, TOKEN);
+        let crossed = Presented::passed(mechanism::bearer(), bearer_short("zzzz-expired-token"))
+            .with_proof(BEARER_TOKEN, TOKEN);
         let failure = verifier().verify(&crossed).expect_err("refused");
         assert!(
             failure.message.contains("the token presented is another"),
