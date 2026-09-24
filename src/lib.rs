@@ -21,24 +21,13 @@ pub mod store;
 
 pub use store::{Token, TokenStore};
 
+use authenticate::clock::{Clock, Window};
 use authenticate::store::sha256;
 use authenticate::{AuthenticateError, Authenticator, Presented};
 use context::Verified;
-use identify::authorization::{BEARER_TOKEN, bearer_short};
-use std::time::{SystemTime, UNIX_EPOCH};
+use identify::authorization::bearer_short;
+use identify::evidence::{self, BEARER_TOKEN};
 use xcore::{Mechanism, mechanism};
-
-type Clock = Box<dyn Fn() -> i64 + Send + Sync>;
-
-/// Seconds since the Unix epoch, now.
-#[must_use]
-pub fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            i64::try_from(since.as_secs()).unwrap_or(i64::MAX)
-        })
-}
 
 /// Verifies a `bearer` claim with a `bearer.token` proof against a store.
 pub struct BearerAuthenticator {
@@ -51,14 +40,14 @@ impl BearerAuthenticator {
     pub fn new(store: TokenStore) -> Self {
         Self {
             store,
-            clock: Box::new(now),
+            clock: Clock::system(0),
         }
     }
 
     /// Where the time comes from; the tests pin it.
     #[must_use]
     pub fn with_clock(mut self, clock: impl Fn() -> i64 + Send + Sync + 'static) -> Self {
-        self.clock = Box::new(clock);
+        self.clock = self.clock.reading(clock);
         self
     }
 
@@ -81,7 +70,7 @@ impl Authenticator for BearerAuthenticator {
                 "'{name}' was presented and this authenticator verifies bearer"
             )));
         }
-        let token = presented.proof(BEARER_TOKEN).ok_or_else(|| {
+        let token = presented.proof(evidence::BEARER_TOKEN).ok_or_else(|| {
             AuthenticateError::new(format!(
                 "no '{BEARER_TOKEN}' proof was presented with the claim '{}'",
                 presented.value
@@ -101,15 +90,11 @@ impl Authenticator for BearerAuthenticator {
                 presented.value
             )));
         }
-        let now = (self.clock)();
-        if let Some(expiry) = held.expiry()
-            && now >= expiry
-        {
-            return Err(AuthenticateError::new(format!(
-                "the token issued to '{}' expired at {expiry} and it is {now}",
-                held.name()
-            )));
-        }
+        self.clock
+            .admits(Window::until(held.expiry()))
+            .map_err(|outside| {
+                AuthenticateError::new(format!("the token issued to '{}' {outside}", held.name()))
+            })?;
         Ok(Verified::Proven)
     }
 }
@@ -131,7 +116,8 @@ mod tests {
     }
 
     fn claim(token: &str) -> Presented {
-        Presented::passed(mechanism::bearer(), bearer_short(token)).with_proof(BEARER_TOKEN, token)
+        Presented::passed(mechanism::bearer(), bearer_short(token))
+            .with_proof(evidence::BEARER_TOKEN, token)
     }
 
     #[test]
@@ -144,8 +130,8 @@ mod tests {
             Verified::Proven
         );
         // A claim under the name the token was issued to reads too.
-        let named =
-            Presented::passed(mechanism::bearer(), "partner-x").with_proof(BEARER_TOKEN, TOKEN);
+        let named = Presented::passed(mechanism::bearer(), "partner-x")
+            .with_proof(evidence::BEARER_TOKEN, TOKEN);
         assert_eq!(verifier.verify(&named).expect("verified"), Verified::Proven);
     }
 
@@ -176,7 +162,7 @@ mod tests {
     #[test]
     fn a_claim_that_is_not_the_presented_token_is_refused() {
         let crossed = Presented::passed(mechanism::bearer(), bearer_short("zzzz-expired-token"))
-            .with_proof(BEARER_TOKEN, TOKEN);
+            .with_proof(evidence::BEARER_TOKEN, TOKEN);
         let failure = verifier().verify(&crossed).expect_err("refused");
         assert!(
             failure.message.contains("the token presented is another"),
