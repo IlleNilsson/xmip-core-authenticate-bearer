@@ -14,30 +14,31 @@
 //!
 //! Opaque only. A token with an issuer's signature on it is `jwt`, one an
 //! authorization server vouches for is `oauth2`, and both are other gates'.
-//! An expired token is refused saying so; an unknown one is refused without
+//! The tokens are the capability's hashed secret store
+//! (`authenticate::secret`), each under the name it was issued to. An
+//! expired token is refused saying so; an unknown one is refused without
 //! saying what the store holds.
 
-pub mod store;
-
-pub use store::{Token, TokenStore};
-
-use authenticate::clock::{Clock, Window};
+use authenticate::AuthenticateError;
+use authenticate::Authenticator;
+use authenticate::clock::Clock;
+use authenticate::secret::SecretStore;
 use authenticate::store::sha256;
-use authenticate::{AuthenticateError, Authenticator, Presented};
 use context::Verified;
+use identify::Presented;
 use identify::authorization::bearer_short;
 use identify::evidence::{self, BEARER_TOKEN};
 use xcore::{Mechanism, mechanism};
 
 /// Verifies a `bearer` claim with a `bearer.token` proof against a store.
 pub struct BearerAuthenticator {
-    store: TokenStore,
+    store: SecretStore,
     clock: Clock,
 }
 
 impl BearerAuthenticator {
     #[must_use]
-    pub fn new(store: TokenStore) -> Self {
+    pub fn new(store: SecretStore) -> Self {
         Self {
             store,
             clock: Clock::system(0),
@@ -53,7 +54,7 @@ impl BearerAuthenticator {
 
     /// The tokens this verifies against.
     #[must_use]
-    pub fn store(&self) -> &TokenStore {
+    pub fn store(&self) -> &SecretStore {
         &self.store
     }
 }
@@ -90,11 +91,9 @@ impl Authenticator for BearerAuthenticator {
                 presented.value
             )));
         }
-        self.clock
-            .admits(Window::until(held.expiry()))
-            .map_err(|outside| {
-                AuthenticateError::new(format!("the token issued to '{}' {outside}", held.name()))
-            })?;
+        self.clock.admits(held.window()).map_err(|outside| {
+            AuthenticateError::new(format!("the token issued to '{}' {outside}", held.name()))
+        })?;
         Ok(Verified::Proven)
     }
 }
@@ -109,7 +108,7 @@ mod tests {
     const TOKEN: &str = "mF_9.B5f-4.1JqM";
 
     fn verifier() -> BearerAuthenticator {
-        let mut store = TokenStore::new();
+        let mut store = SecretStore::new();
         store.insert("partner-x", TOKEN, Some(NOW + 3600));
         store.insert("partner-z", "zzzz-expired-token", Some(NOW - 1));
         BearerAuthenticator::new(store).with_clock(|| NOW)
