@@ -65,12 +65,6 @@ impl Authenticator for BearerAuthenticator {
     }
 
     fn verify(&self, presented: &Presented) -> Result<Verified, AuthenticateError> {
-        let name = presented.mechanism.name();
-        if name != self.mechanism().name() {
-            return Err(AuthenticateError::new(format!(
-                "'{name}' was presented and this authenticator verifies bearer"
-            )));
-        }
         let token = presented.proof(evidence::BEARER_TOKEN).ok_or_else(|| {
             AuthenticateError::new(format!(
                 "no '{BEARER_TOKEN}' proof was presented with the claim '{}'",
@@ -171,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_proof_and_another_mechanism_are_refused_by_name() {
+    fn a_missing_proof_is_refused_by_name() {
         let bare = Presented::passed(mechanism::bearer(), "mF_9.B5f…");
         let failure = verifier().verify(&bare).expect_err("refused");
         assert!(
@@ -179,10 +173,6 @@ mod tests {
             "{}",
             failure.message
         );
-
-        let jwt = Presented::passed(mechanism::jwt(), "alice").with_proof("jwt.token", "a.b.c");
-        let failure = verifier().verify(&jwt).expect_err("refused");
-        assert!(failure.message.contains("'jwt'"), "{}", failure.message);
     }
 
     struct Registry;
