@@ -103,8 +103,8 @@ mod tests {
 
     fn verifier() -> BearerAuthenticator {
         let mut store = SecretStore::new();
-        store.insert("partner-x", TOKEN, Some(NOW + 3600));
-        store.insert("partner-z", "zzzz-expired-token", Some(NOW - 1));
+        store.insert("party-x", TOKEN, Some(NOW + 3600));
+        store.insert("party-z", "zzzz-expired-token", Some(NOW - 1));
         BearerAuthenticator::new(store).with_clock(|| NOW)
     }
 
@@ -123,7 +123,7 @@ mod tests {
             Verified::Proven
         );
         // A claim under the name the token was issued to reads too.
-        let named = Presented::passed(mechanism::bearer(), "partner-x")
+        let named = Presented::passed(mechanism::bearer(), "party-x")
             .with_proof(evidence::BEARER_TOKEN, TOKEN);
         assert_eq!(verifier.verify(&named).expect("verified"), Verified::Proven);
     }
@@ -146,7 +146,7 @@ mod tests {
         assert_eq!(
             failure.message,
             format!(
-                "the token issued to 'partner-z' expired at {} and it is {NOW}",
+                "the token issued to 'party-z' expired at {} and it is {NOW}",
                 NOW - 1
             )
         );
