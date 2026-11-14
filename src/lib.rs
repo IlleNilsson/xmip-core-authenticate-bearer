@@ -23,7 +23,7 @@ use authenticate::AuthenticateError;
 use authenticate::Authenticator;
 use authenticate::clock::Clock;
 use authenticate::secret::SecretStore;
-use authenticate::store::sha256;
+use codec::digest::sha256;
 use context::Verified;
 use identify::Presented;
 use identify::authorization::bearer_short;
